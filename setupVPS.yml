@@ -1,0 +1,99 @@
+---
+- name: Setup VPS playbook
+  hosts: all
+  become: yes
+  vars:
+    user: myuser
+    group: mygroup
+    user_uid: 1011
+    group_gid: 1011
+    my_public_ssh_key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+  handlers:
+  - name: Restart ssh
+    service: name=ssh state=restarted
+
+  tasks:
+  - name: Update package index
+    apt: update_cache=yes cache_valid_time=3600
+
+  - name: Upgrade to the latest packages
+    apt: upgrade=yes force=yes
+
+  - name: create {{group}} group
+    group: name={{group}} gid={{project_gid}} state=present
+
+  - name: create {{user}} user
+    user:
+      name: "{{user}}"
+      comment: "Project user {{user}}"
+      uid: "{{project_uid}}"
+      group: "{{group}}"
+      shell: /bin/bash
+      generate_ssh_key: yes
+
+  - name: Add {{user}} user to sudoers
+    lineinfile:
+      path: /etc/sudoers
+      regexp: "^{{user}}  ALL=(ALL:ALL) NOPASSWD:ALL"
+      line: "{{user}}  ALL=(ALL:ALL) NOPASSWD:ALL"
+      state: present
+
+  - name: Change ssh port
+    lineinfile:
+      dest: /etc/ssh/sshd_config
+      regexp: "^Port\s"
+      line: "Port {{ ssh_port }}"
+      state: present
+    notify: Restart ssh
+
+  - name: No password authentication
+    lineinfile:
+      dest: /etc/ssh/sshd_config
+      regexp: "^PasswordAuthentication"
+      line: "PasswordAuthentication no"
+      state: present
+    notify: Restart ssh
+
+  - name: No root ssh access
+    lineinfile:
+      dest: /etc/ssh/sshd_config
+      regexp: "^PermitRootLogin"
+      line: "PermitRootLogin no"
+      state: present
+    notify: Restart ssh
+
+  - name: Improving security icmp_echo_ignore_broadcasts
+    command: echo "1" > /proc/sys/net/ipv4/icmp_echo_ignore_broadcasts
+
+  - name: Improving security accept_source_route
+    command: echo "0" > /proc/sys/net/ipv4/conf/all/accept_source_route
+
+  - name: Improving security tcp_max_syn_backlog
+    command: echo "1024" > /proc/sys/net/ipv4/tcp_max_syn_backlog
+
+  - name: Improving security icmp_ignore_bogus_error_responses
+    command: echo "1" > /proc/sys/net/ipv4/icmp_ignore_bogus_error_responses
+
+  - name: Set authorized ssh key
+    authorized_key:
+      user: {{user}}
+      state: present
+      key: "{{my_public_ssh_key}}"
+
+  - name: Print {{user}} ssh key
+    command: cat /home/{{user}}/.ssh/id_rsa.pub
+    register: ssh_key
+
+  - name: Print ssh key
+    debug:
+      var: ssh_key.stdout
+    when: ssh_key is defined
+
+  - name: Reboot the server
+    shell: "sleep 5 && reboot"
+    async: 1
+    poll: 0
+
+  - name: End the ansible playbook (here because of the reboot)
+    meta: end_play
